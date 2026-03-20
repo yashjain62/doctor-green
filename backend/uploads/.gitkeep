@@ -1,0 +1,2 @@
+This folder stores temporarily uploaded images during prediction.
+It is auto-created by app.py if it doesn't exist.
