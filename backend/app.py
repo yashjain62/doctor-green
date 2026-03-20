@@ -2,6 +2,7 @@ import os
 import json
 import csv
 import base64
+import urllib.request
 from io import BytesIO
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -20,12 +21,49 @@ DISEASE_INFO_PATH = os.path.join(BASE_DIR, 'data', 'disease_info.csv')
 SUPPLEMENT_INFO_PATH = os.path.join(BASE_DIR, 'data', 'supplement_info.csv')
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, 'model'), exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = None
 class_names = []
 disease_info = {}
 supplement_info = {}
+
+
+def download_model_if_needed():
+    """Auto-download model from HuggingFace if MODEL_URL env var is set."""
+    model_url = os.environ.get('MODEL_URL', '').strip()
+    print(f"[INFO] MODEL_URL = '{model_url}'")
+
+    if os.path.exists(MODEL_PATH):
+        size = os.path.getsize(MODEL_PATH)
+        print(f"[INFO] Model file found locally. Size: {size / 1024 / 1024:.1f} MB")
+        if size < 1000000:
+            print(f"[WARNING] Model file too small ({size} bytes), re-downloading...")
+            os.remove(MODEL_PATH)
+        else:
+            return
+
+    if not model_url:
+        print("[WARNING] No MODEL_URL set and no local model found. Running in demo mode.")
+        return
+
+    print(f"[INFO] Downloading model from: {model_url}")
+    print("[INFO] This may take 2-3 minutes...")
+    try:
+        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+        import urllib.request
+        def progress(count, block_size, total_size):
+            if total_size > 0 and count % 100 == 0:
+                pct = count * block_size * 100 / total_size
+                print(f"[INFO] Download progress: {pct:.1f}%")
+        urllib.request.urlretrieve(model_url, MODEL_PATH, reporthook=progress)
+        size = os.path.getsize(MODEL_PATH)
+        print(f"[INFO] Model downloaded. Size: {size / 1024 / 1024:.1f} MB")
+    except Exception as e:
+        print(f"[ERROR] Failed to download model: {e}")
+        if os.path.exists(MODEL_PATH):
+            os.remove(MODEL_PATH)
 
 
 def load_disease_info():
@@ -234,6 +272,7 @@ def health():
 
 
 # Initialize
+download_model_if_needed()
 load_disease_info()
 load_supplement_info()
 load_model()
