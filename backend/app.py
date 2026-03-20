@@ -372,14 +372,6 @@ def load_model():
         print(f"[ERROR] Loading model: {e}")
 
 
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],
-                         [0.229, 0.224, 0.225])
-])
-
-
 def predict_image(img: Image.Image):
     if model is None:
         # Demo mode: use image hash to vary results across different uploads
