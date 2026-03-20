@@ -20,7 +20,6 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(BASE_DIR, 'model'), exist_ok=True)
 
-device = 'cpu'
 model = None
 class_names = []
 disease_info = {}
@@ -30,27 +29,21 @@ supplement_info = {}
 def download_model_if_needed():
     model_url = os.environ.get('MODEL_URL', '').strip()
     print(f"[INFO] MODEL_URL = '{model_url}'")
-
     if os.path.exists(MODEL_PATH):
         size = os.path.getsize(MODEL_PATH)
         print(f"[INFO] Model file found. Size: {size / 1024 / 1024:.1f} MB")
-        if size < 1000000:
-            os.remove(MODEL_PATH)
-        else:
+        if size > 1000000:
             return
-
+        os.remove(MODEL_PATH)
     if not model_url:
         print("[WARNING] No MODEL_URL set. Running in demo mode.")
         return
-
-    print(f"[INFO] Downloading model from HuggingFace...")
+    print("[INFO] Downloading model from HuggingFace...")
     try:
-        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
         urllib.request.urlretrieve(model_url, MODEL_PATH)
-        size = os.path.getsize(MODEL_PATH)
-        print(f"[INFO] Model downloaded. Size: {size / 1024 / 1024:.1f} MB")
+        print(f"[INFO] Model downloaded. Size: {os.path.getsize(MODEL_PATH) / 1024 / 1024:.1f} MB")
     except Exception as e:
-        print(f"[ERROR] Failed to download model: {e}")
+        print(f"[ERROR] Download failed: {e}")
         if os.path.exists(MODEL_PATH):
             os.remove(MODEL_PATH)
 
@@ -59,8 +52,7 @@ def load_disease_info():
     global disease_info
     try:
         with open(DISEASE_INFO_PATH, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+            for row in csv.DictReader(f):
                 disease_info[row['class'].strip()] = {
                     'description': row['description'].strip(),
                     'prevention': row['prevention'].strip(),
@@ -68,31 +60,28 @@ def load_disease_info():
                 }
         print(f"[INFO] Loaded {len(disease_info)} disease records.")
     except Exception as e:
-        print(f"[ERROR] Loading disease_info.csv: {e}")
+        print(f"[ERROR] disease_info.csv: {e}")
 
 
 def load_supplement_info():
     global supplement_info
     try:
         with open(SUPPLEMENT_INFO_PATH, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+            for row in csv.DictReader(f):
                 supplement_info[row['class'].strip()] = {
                     'supplement': row['supplement'].strip(),
                     'buy_link': row['buy_link'].strip()
                 }
         print(f"[INFO] Loaded {len(supplement_info)} supplement records.")
     except Exception as e:
-        print(f"[ERROR] Loading supplement_info.csv: {e}")
+        print(f"[ERROR] supplement_info.csv: {e}")
 
 
 def load_model():
     global model, class_names
-
-    # Lazy import torch only when needed to save memory during startup
-    import torch
-    import torch.nn as nn
+    import torch, torch.nn as nn
     from torchvision import models as tv_models
+    import gc
 
     if not os.path.exists(CLASS_NAMES_PATH):
         print("[WARNING] class_names.json not found.")
@@ -107,54 +96,30 @@ def load_model():
         return
 
     try:
-        num_classes = len(class_names)
         m = tv_models.resnet50(weights=None)
-        m.fc = nn.Linear(m.fc.in_features, num_classes)
-
-        # Load with map_location=cpu and weights_only to save memory
+        m.fc = nn.Linear(m.fc.in_features, len(class_names))
         state = torch.load(MODEL_PATH, map_location='cpu', weights_only=True)
         m.load_state_dict(state)
         m.eval()
-
-        # Free any unused memory
-        import gc
         gc.collect()
-
         model = m
-        print(f"[INFO] Model loaded successfully. Classes: {num_classes}")
+        print(f"[INFO] Model loaded. Classes: {len(class_names)}")
     except Exception as e:
         print(f"[ERROR] Loading model: {e}")
 
 
-def get_transform():
-    from torchvision import transforms
-    return transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406],
-                             [0.229, 0.224, 0.225])
-    ])
-
-
-def predict_image(img: Image.Image):
+def predict_image(img):
     if model is None:
         import hashlib
         buf = BytesIO()
         img.save(buf, format='JPEG')
         h = int(hashlib.md5(buf.getvalue()[:1024]).hexdigest(), 16)
-
-        all_classes = list(disease_info.keys())
-        if not all_classes:
-            all_classes = ['Apple___Cedar_apple_rust', 'Tomato___Early_blight', 'Potato___Late_blight']
-
+        all_classes = list(disease_info.keys()) or ['Apple___Cedar_apple_rust']
         idx = h % len(all_classes)
         demo_class = all_classes[idx]
-        conf = round(95.0 + (h % 50) / 10, 1)
-        conf = min(conf, 99.9)
-        idx2 = (idx + 1) % len(all_classes)
-        idx3 = (idx + 2) % len(all_classes)
+        conf = min(round(95.0 + (h % 50) / 10, 1), 99.9)
         rem = round(100 - conf, 1)
-
+        idx2, idx3 = (idx + 1) % len(all_classes), (idx + 2) % len(all_classes)
         info = disease_info.get(demo_class, {})
         supp = supplement_info.get(demo_class, {})
         is_healthy = 'healthy' in demo_class.lower()
@@ -172,41 +137,35 @@ def predict_image(img: Image.Image):
                 {'class': all_classes[idx3], 'confidence': round(rem * 0.4, 1)},
             ],
             'demo_mode': True,
-            'note': 'Running in DEMO mode. Model not loaded due to memory constraints.'
+            'note': 'Running in DEMO mode. Model not loaded.'
         }
 
     import torch
-    transform = get_transform()
-    img_tensor = transform(img).unsqueeze(0)
-
+    from torchvision import transforms
+    tf = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    tensor = tf(img).unsqueeze(0)
     with torch.no_grad():
-        outputs = model(img_tensor)
-        probs = torch.softmax(outputs, dim=1)[0]
-
+        probs = torch.softmax(model(tensor), dim=1)[0]
     top3_idx = probs.topk(3).indices.tolist()
     top3_probs = probs.topk(3).values.tolist()
-
     top_class = class_names[top3_idx[0]]
     confidence = round(top3_probs[0] * 100, 2)
     is_healthy = 'healthy' in top_class.lower()
-
     info = disease_info.get(top_class, {})
     supp = supplement_info.get(top_class, {})
-
-    top3 = [
-        {'class': class_names[top3_idx[i]], 'confidence': round(top3_probs[i] * 100, 2)}
-        for i in range(len(top3_idx))
-    ]
-
     return {
         'status': 'healthy' if is_healthy else 'diseased',
         'top_prediction': top_class,
         'confidence': confidence,
         'description': info.get('description', 'No description available.'),
         'prevention': info.get('prevention', 'No prevention info.'),
-        'supplement': supp.get('supplement', 'N/A') if not is_healthy else '',
-        'buy_link': supp.get('buy_link', '#') if not is_healthy else '',
-        'top3': top3
+        'supplement': supp.get('supplement', '') if not is_healthy else '',
+        'buy_link': supp.get('buy_link', '') if not is_healthy else '',
+        'top3': [{'class': class_names[top3_idx[i]], 'confidence': round(top3_probs[i] * 100, 2)} for i in range(3)]
     }
 
 
@@ -220,20 +179,17 @@ def predict():
     try:
         img = None
         if 'image' in request.files:
-            file = request.files['image']
-            img = Image.open(file.stream).convert('RGB')
+            img = Image.open(request.files['image'].stream).convert('RGB')
         elif request.is_json:
             data = request.get_json()
             if 'image' in data:
                 img_data = data['image']
                 if ',' in img_data:
                     img_data = img_data.split(',')[1]
-                img_bytes = base64.b64decode(img_data)
-                img = Image.open(BytesIO(img_bytes)).convert('RGB')
+                img = Image.open(BytesIO(base64.b64decode(img_data))).convert('RGB')
         if img is None:
             return jsonify({'error': 'No image provided'}), 400
-        result = predict_image(img)
-        return jsonify(result)
+        return jsonify(predict_image(img))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -241,17 +197,11 @@ def predict():
 @app.route('/supplements', methods=['GET'])
 def get_supplements():
     try:
-        supps = []
-        seen = set()
+        seen, supps = set(), []
         for cls, data in supplement_info.items():
-            s_name = data['supplement']
-            if s_name not in seen:
-                seen.add(s_name)
-                supps.append({
-                    'class': cls,
-                    'supplement': s_name,
-                    'buy_link': data['buy_link']
-                })
+            if data['supplement'] not in seen:
+                seen.add(data['supplement'])
+                supps.append({'class': cls, 'supplement': data['supplement'], 'buy_link': data['buy_link']})
         return jsonify({'supplements': supps})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -275,246 +225,3 @@ load_model()
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)
-
-
-def download_model_if_needed():
-    """Auto-download model from HuggingFace if MODEL_URL env var is set."""
-    model_url = os.environ.get('MODEL_URL', '').strip()
-    print(f"[INFO] MODEL_URL = '{model_url}'")
-
-    if os.path.exists(MODEL_PATH):
-        size = os.path.getsize(MODEL_PATH)
-        print(f"[INFO] Model file found locally. Size: {size / 1024 / 1024:.1f} MB")
-        if size < 1000000:
-            print(f"[WARNING] Model file too small ({size} bytes), re-downloading...")
-            os.remove(MODEL_PATH)
-        else:
-            return
-
-    if not model_url:
-        print("[WARNING] No MODEL_URL set and no local model found. Running in demo mode.")
-        return
-
-    print(f"[INFO] Downloading model from: {model_url}")
-    print("[INFO] This may take 2-3 minutes...")
-    try:
-        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-        import urllib.request
-        def progress(count, block_size, total_size):
-            if total_size > 0 and count % 100 == 0:
-                pct = count * block_size * 100 / total_size
-                print(f"[INFO] Download progress: {pct:.1f}%")
-        urllib.request.urlretrieve(model_url, MODEL_PATH, reporthook=progress)
-        size = os.path.getsize(MODEL_PATH)
-        print(f"[INFO] Model downloaded. Size: {size / 1024 / 1024:.1f} MB")
-    except Exception as e:
-        print(f"[ERROR] Failed to download model: {e}")
-        if os.path.exists(MODEL_PATH):
-            os.remove(MODEL_PATH)
-
-
-def load_disease_info():
-    global disease_info
-    try:
-        with open(DISEASE_INFO_PATH, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                disease_info[row['class'].strip()] = {
-                    'description': row['description'].strip(),
-                    'prevention': row['prevention'].strip(),
-                    'supplement': row['supplement'].strip()
-                }
-        print(f"[INFO] Loaded {len(disease_info)} disease records.")
-    except Exception as e:
-        print(f"[ERROR] Loading disease_info.csv: {e}")
-
-
-def load_supplement_info():
-    global supplement_info
-    try:
-        with open(SUPPLEMENT_INFO_PATH, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                supplement_info[row['class'].strip()] = {
-                    'supplement': row['supplement'].strip(),
-                    'buy_link': row['buy_link'].strip()
-                }
-        print(f"[INFO] Loaded {len(supplement_info)} supplement records.")
-    except Exception as e:
-        print(f"[ERROR] Loading supplement_info.csv: {e}")
-
-
-def load_model():
-    global model, class_names
-    if not os.path.exists(CLASS_NAMES_PATH):
-        print("[WARNING] class_names.json not found. Using default classes.")
-        class_names = list(disease_info.keys())
-        return
-
-    with open(CLASS_NAMES_PATH, 'r') as f:
-        class_names = json.load(f)
-
-    if not os.path.exists(MODEL_PATH):
-        print("[WARNING] Model file not found. Please train the model first using train_model.py")
-        return
-
-    try:
-        num_classes = len(class_names)
-        m = models.resnet50(weights=None)
-        m.fc = nn.Linear(m.fc.in_features, num_classes)
-        state = torch.load(MODEL_PATH, map_location=device)
-        m.load_state_dict(state)
-        m.to(device)
-        m.eval()
-        model = m
-        print(f"[INFO] Model loaded. Classes: {num_classes}")
-    except Exception as e:
-        print(f"[ERROR] Loading model: {e}")
-
-
-def predict_image(img: Image.Image):
-    if model is None:
-        # Demo mode: use image hash to vary results across different uploads
-        import hashlib
-        buf = BytesIO()
-        img.save(buf, format='JPEG')
-        h = int(hashlib.md5(buf.getvalue()[:1024]).hexdigest(), 16)
-
-        all_classes = list(disease_info.keys())
-        if not all_classes:
-            all_classes = ['Apple___Cedar_apple_rust', 'Tomato___Early_blight', 'Potato___Late_blight']
-
-        idx = h % len(all_classes)
-        demo_class = all_classes[idx]
-        conf = round(95.0 + (h % 50) / 10, 1)  # 95.0 – 99.9
-        conf = min(conf, 99.9)
-
-        # Pick 2 other classes for top3
-        idx2 = (idx + 1) % len(all_classes)
-        idx3 = (idx + 2) % len(all_classes)
-        rem = round(100 - conf, 1)
-        c2 = round(rem * 0.6, 1)
-        c3 = round(rem * 0.4, 1)
-
-        info = disease_info.get(demo_class, {})
-        supp = supplement_info.get(demo_class, {})
-        is_healthy = 'healthy' in demo_class.lower()
-        return {
-            'status': 'healthy' if is_healthy else 'diseased',
-            'top_prediction': demo_class,
-            'confidence': conf,
-            'description': info.get('description', 'No description available.'),
-            'prevention': info.get('prevention', 'No prevention info.'),
-            'supplement': supp.get('supplement', '') if not is_healthy else '',
-            'buy_link': supp.get('buy_link', '') if not is_healthy else '',
-            'top3': [
-                {'class': demo_class, 'confidence': conf},
-                {'class': all_classes[idx2], 'confidence': c2},
-                {'class': all_classes[idx3], 'confidence': c3},
-            ],
-            'demo_mode': True,
-            'note': 'Running in DEMO mode. Train model with: python train_model.py for real predictions.'
-        }
-
-    img_tensor = transform(img).unsqueeze(0).to(device)
-    with torch.no_grad():
-        outputs = model(img_tensor)
-        probs = torch.softmax(outputs, dim=1)[0]
-
-    top3_idx = probs.topk(3).indices.tolist()
-    top3_probs = probs.topk(3).values.tolist()
-
-    top_class = class_names[top3_idx[0]]
-    confidence = round(top3_probs[0] * 100, 2)
-    is_healthy = 'healthy' in top_class.lower()
-
-    info = disease_info.get(top_class, {})
-    supp = supplement_info.get(top_class, {})
-
-    top3 = [
-        {'class': class_names[top3_idx[i]], 'confidence': round(top3_probs[i] * 100, 2)}
-        for i in range(len(top3_idx))
-    ]
-
-    return {
-        'status': 'healthy' if is_healthy else 'diseased',
-        'top_prediction': top_class,
-        'confidence': confidence,
-        'description': info.get('description', 'No description available.'),
-        'prevention': info.get('prevention', 'No prevention info.'),
-        'supplement': supp.get('supplement', 'N/A') if not is_healthy else '',
-        'buy_link': supp.get('buy_link', '#') if not is_healthy else '',
-        'top3': top3
-    }
-
-
-@app.route('/', methods=['GET'])
-def index():
-    return jsonify({'message': 'Doctor Green API running', 'status': 'ok'})
-
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    try:
-        img = None
-
-        if 'image' in request.files:
-            file = request.files['image']
-            img = Image.open(file.stream).convert('RGB')
-
-        elif request.is_json:
-            data = request.get_json()
-            if 'image' in data:
-                img_data = data['image']
-                if ',' in img_data:
-                    img_data = img_data.split(',')[1]
-                img_bytes = base64.b64decode(img_data)
-                img = Image.open(BytesIO(img_bytes)).convert('RGB')
-
-        if img is None:
-            return jsonify({'error': 'No image provided'}), 400
-
-        result = predict_image(img)
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/supplements', methods=['GET'])
-def get_supplements():
-    try:
-        supps = []
-        seen = set()
-        for cls, data in supplement_info.items():
-            s_name = data['supplement']
-            if s_name not in seen:
-                seen.add(s_name)
-                supps.append({
-                    'class': cls,
-                    'supplement': s_name,
-                    'buy_link': data['buy_link']
-                })
-        return jsonify({'supplements': supps})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({
-        'status': 'ok',
-        'model_loaded': model is not None,
-        'classes_loaded': len(class_names),
-        'diseases_loaded': len(disease_info)
-    })
-
-
-# Initialize
-download_model_if_needed()
-load_disease_info()
-load_supplement_info()
-load_model()
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
