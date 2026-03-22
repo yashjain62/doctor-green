@@ -4,19 +4,39 @@ import csv
 import base64
 import urllib.request
 from io import BytesIO
-from flask import Flask, request, jsonify
+
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from PIL import Image
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False)
+
+# Fix CORS completely
+CORS(app, origins="*")
 
 @app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Max-Age'] = '86400'
     return response
+
+@app.route('/predict', methods=['OPTIONS'])
+def predict_options():
+    response = make_response()
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    return response, 200
+
+@app.route('/supplements', methods=['OPTIONS'])
+def supplements_options():
+    response = make_response()
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+    return response, 200
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'model', 'doctor_green_model.pt')
@@ -86,7 +106,8 @@ def load_supplement_info():
 
 def load_model():
     global model, class_names
-    import torch, torch.nn as nn
+    import torch
+    import torch.nn as nn
     from torchvision import models as tv_models
     import gc
 
@@ -144,7 +165,7 @@ def predict_image(img):
                 {'class': all_classes[idx3], 'confidence': round(rem * 0.4, 1)},
             ],
             'demo_mode': True,
-            'note': 'Running in DEMO mode. Model not loaded.'
+            'note': 'Running in DEMO mode.'
         }
 
     import torch
@@ -196,7 +217,10 @@ def predict():
                 img = Image.open(BytesIO(base64.b64decode(img_data))).convert('RGB')
         if img is None:
             return jsonify({'error': 'No image provided'}), 400
-        return jsonify(predict_image(img))
+        result = predict_image(img)
+        response = jsonify(result)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -208,8 +232,14 @@ def get_supplements():
         for cls, data in supplement_info.items():
             if data['supplement'] not in seen:
                 seen.add(data['supplement'])
-                supps.append({'class': cls, 'supplement': data['supplement'], 'buy_link': data['buy_link']})
-        return jsonify({'supplements': supps})
+                supps.append({
+                    'class': cls,
+                    'supplement': data['supplement'],
+                    'buy_link': data['buy_link']
+                })
+        response = jsonify({'supplements': supps})
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
