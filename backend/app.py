@@ -11,8 +11,16 @@ from PIL import Image
  
 app = Flask(__name__)
  
-# Allow all origins completely
-CORS(app, origins="*", allow_headers="*", methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"])
+# Production + localhost CORS (safe)
+CORS(
+    app,
+    resources={r"/*": {"origins": [
+        "http://localhost:3000",
+        "https://doctor-green-uypr.vercel.app",
+        "https://doctor-green-uypr-git-main-yashs-projects-5d7eed62.vercel.app"
+    ]}},
+    supports_credentials=True
+)
  
 @app.after_request
 def add_cors_headers(response):
