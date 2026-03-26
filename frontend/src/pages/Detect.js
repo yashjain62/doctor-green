@@ -66,10 +66,11 @@ export default function Detect({ setResult, addToHistory }) {
     setLoading(true); setError('');
     try {
       const formData = new FormData();
-      formData.append('image', image, 'leaf.jpg');
-      const { data } = await axios.post(`${API_URL}/predict`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      formData.append('image', image);
+      const { data } = await axios.post(
+        `${API_URL}/predict`,
+        formData
+      );
       setResult({ ...data, imageUrl: preview });
       addToHistory({ ...data, imageUrl: preview, timestamp: Date.now() });
       navigate('/result');
