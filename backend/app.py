@@ -213,28 +213,27 @@ def index():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        print("FILES RECEIVED:", request.files)
+        # Debug log
+        print("Request files:", request.files)
 
         if 'image' not in request.files:
-            return jsonify({'error': 'No image file received'}), 400
+            return jsonify({'error': 'No image provided'}), 400
 
         file = request.files['image']
 
         if file.filename == '':
-            return jsonify({'error': 'Empty file'}), 400
+            return jsonify({'error': 'Empty filename'}), 400
 
-        img = Image.open(file).convert('RGB')
+        # Read image safely
+        img = Image.open(BytesIO(file.read())).convert('RGB')
 
         result = predict_image(img)
 
-        response = jsonify(result)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        return response
+        return jsonify(result)
 
     except Exception as e:
-        print("ERROR IN /predict:", str(e))
+        print("Predict error:", str(e))
         return jsonify({'error': str(e)}), 500
- 
  
 @app.route('/supplements', methods=['GET'])
 def get_supplements():
