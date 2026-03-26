@@ -4,40 +4,48 @@ import csv
 import base64
 import urllib.request
 from io import BytesIO
-
+ 
 from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from PIL import Image
-
+ 
 app = Flask(__name__)
-
-# Fix CORS completely
-CORS(app, origins="*")
-
+ 
+# Allow all origins completely
+CORS(app, origins="*", allow_headers="*", methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"])
+ 
 @app.after_request
 def add_cors_headers(response):
+    origin = request.headers.get('Origin', '*')
     response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers['Access-Control-Max-Age'] = '86400'
     return response
-
+ 
 @app.route('/predict', methods=['OPTIONS'])
 def predict_options():
-    response = make_response()
+    response = make_response('', 200)
     response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-    return response, 200
-
+    return response
+ 
 @app.route('/supplements', methods=['OPTIONS'])
 def supplements_options():
-    response = make_response()
+    response = make_response('', 200)
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-    return response, 200
-
+    return response
+ 
+@app.route('/health', methods=['OPTIONS'])
+def health_options():
+    response = make_response('', 200)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+    return response
+ 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'model', 'doctor_green_model.pt')
 CLASS_NAMES_PATH = os.path.join(BASE_DIR, 'data', 'class_names.json')
@@ -46,13 +54,13 @@ SUPPLEMENT_INFO_PATH = os.path.join(BASE_DIR, 'data', 'supplement_info.csv')
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(os.path.join(BASE_DIR, 'model'), exist_ok=True)
-
+ 
 model = None
 class_names = []
 disease_info = {}
 supplement_info = {}
-
-
+ 
+ 
 def download_model_if_needed():
     model_url = os.environ.get('MODEL_URL', '').strip()
     print(f"[INFO] MODEL_URL = '{model_url}'")
@@ -73,8 +81,8 @@ def download_model_if_needed():
         print(f"[ERROR] Download failed: {e}")
         if os.path.exists(MODEL_PATH):
             os.remove(MODEL_PATH)
-
-
+ 
+ 
 def load_disease_info():
     global disease_info
     try:
@@ -88,8 +96,8 @@ def load_disease_info():
         print(f"[INFO] Loaded {len(disease_info)} disease records.")
     except Exception as e:
         print(f"[ERROR] disease_info.csv: {e}")
-
-
+ 
+ 
 def load_supplement_info():
     global supplement_info
     try:
@@ -102,27 +110,27 @@ def load_supplement_info():
         print(f"[INFO] Loaded {len(supplement_info)} supplement records.")
     except Exception as e:
         print(f"[ERROR] supplement_info.csv: {e}")
-
-
+ 
+ 
 def load_model():
     global model, class_names
     import torch
     import torch.nn as nn
     from torchvision import models as tv_models
     import gc
-
+ 
     if not os.path.exists(CLASS_NAMES_PATH):
         print("[WARNING] class_names.json not found.")
         class_names = list(disease_info.keys())
         return
-
+ 
     with open(CLASS_NAMES_PATH, 'r') as f:
         class_names = json.load(f)
-
+ 
     if not os.path.exists(MODEL_PATH):
         print("[WARNING] Model file not found. Running in demo mode.")
         return
-
+ 
     try:
         m = tv_models.resnet50(weights=None)
         m.fc = nn.Linear(m.fc.in_features, len(class_names))
@@ -134,8 +142,8 @@ def load_model():
         print(f"[INFO] Model loaded. Classes: {len(class_names)}")
     except Exception as e:
         print(f"[ERROR] Loading model: {e}")
-
-
+ 
+ 
 def predict_image(img):
     if model is None:
         import hashlib
@@ -167,7 +175,7 @@ def predict_image(img):
             'demo_mode': True,
             'note': 'Running in DEMO mode.'
         }
-
+ 
     import torch
     from torchvision import transforms
     tf = transforms.Compose([
@@ -195,13 +203,13 @@ def predict_image(img):
         'buy_link': supp.get('buy_link', '') if not is_healthy else '',
         'top3': [{'class': class_names[top3_idx[i]], 'confidence': round(top3_probs[i] * 100, 2)} for i in range(3)]
     }
-
-
+ 
+ 
 @app.route('/', methods=['GET'])
 def index():
     return jsonify({'message': 'Doctor Green API running', 'status': 'ok'})
-
-
+ 
+ 
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
@@ -223,8 +231,8 @@ def predict():
         return response
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
+ 
+ 
 @app.route('/supplements', methods=['GET'])
 def get_supplements():
     try:
@@ -242,8 +250,8 @@ def get_supplements():
         return response
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-
+ 
+ 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
@@ -252,13 +260,13 @@ def health():
         'classes_loaded': len(class_names),
         'diseases_loaded': len(disease_info)
     })
-
-
+ 
+ 
 # Initialize
 download_model_if_needed()
 load_disease_info()
 load_supplement_info()
 load_model()
-
+ 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)
