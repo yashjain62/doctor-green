@@ -213,23 +213,26 @@ def index():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        img = None
-        if 'image' in request.files:
-            img = Image.open(request.files['image'].stream).convert('RGB')
-        elif request.is_json:
-            data = request.get_json()
-            if 'image' in data:
-                img_data = data['image']
-                if ',' in img_data:
-                    img_data = img_data.split(',')[1]
-                img = Image.open(BytesIO(base64.b64decode(img_data))).convert('RGB')
-        if img is None:
-            return jsonify({'error': 'No image provided'}), 400
+        print("FILES RECEIVED:", request.files)
+
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image file received'}), 400
+
+        file = request.files['image']
+
+        if file.filename == '':
+            return jsonify({'error': 'Empty file'}), 400
+
+        img = Image.open(file).convert('RGB')
+
         result = predict_image(img)
+
         response = jsonify(result)
         response.headers['Access-Control-Allow-Origin'] = '*'
         return response
+
     except Exception as e:
+        print("ERROR IN /predict:", str(e))
         return jsonify({'error': str(e)}), 500
  
  
