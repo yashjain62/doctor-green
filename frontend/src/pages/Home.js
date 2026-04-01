@@ -48,17 +48,19 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Feature strip */}
-      <div style={{maxWidth:1200, margin:'0 auto', padding:'0 80px 64px', display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:20}}>
+      {/* Feature cards — mobile-friendly grid */}
+      <div className="features-grid">
         {[
-          { icon:'🔬', title:'Advanced AI', desc:'ResNet50 deep learning model trained on 87,000+ plant images across 38 disease classes.' },
-          { icon:'📸', title:'Camera & Upload', desc:'Capture live photos or upload from gallery. Works on any device instantly.' },
-          { icon:'💊', title:'Supplement Guide', desc:'Get targeted treatment recommendations and buy directly from Amazon.' },
+          { icon: '🔬', title: 'Advanced AI', desc: 'ResNet50 deep learning model trained on 87,000+ plant images across 38 disease classes.' },
+          { icon: '📸', title: 'Camera & Upload', desc: 'Capture live photos or upload from gallery. Works on any device instantly.' },
+          { icon: '💊', title: 'Supplement Guide', desc: 'Get targeted treatment recommendations and buy directly from Amazon.' },
         ].map((f, i) => (
-          <div key={i} className="glass-card" style={{textAlign:'center', padding:'32px 24px'}}>
-            <div style={{fontSize:44, marginBottom:14}}>{f.icon}</div>
-            <h3 style={{fontFamily:'var(--font-serif)', fontSize:20, color:'#fff', marginBottom:10}}>{f.title}</h3>
-            <p style={{color:'var(--text-muted)', fontSize:14, lineHeight:1.7}}>{f.desc}</p>
+          <div key={i} className="feature-card">
+            <div className="feature-icon">{f.icon}</div>
+            <div>
+              <h3 className="feature-title">{f.title}</h3>
+              <p className="feature-desc">{f.desc}</p>
+            </div>
           </div>
         ))}
       </div>

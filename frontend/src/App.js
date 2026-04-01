@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -7,6 +7,10 @@ import Detect from './pages/Detect';
 import Result from './pages/Result';
 import Supplements from './pages/Supplements';
 import Contact from './pages/Contact';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
+import MyScans from './pages/MyScans';
+import { AuthProvider } from './context/AuthContext';
 import './App.css';
 
 export const LangContext = React.createContext();
@@ -60,21 +64,26 @@ function App() {
 
   return (
     <LangContext.Provider value={{ lang, setLang, t, translations }}>
-      <Router>
-        <div className="app-wrapper">
-          <Navbar />
-          <main className="main-content">
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/detect" element={<Detect setResult={setResult} addToHistory={addToHistory} />} />
-              <Route path="/result" element={<Result result={result} scanHistory={scanHistory} />} />
-              <Route path="/supplements" element={<Supplements />} />
-              <Route path="/contact" element={<Contact />} />
-            </Routes>
-          </main>
-          <Footer />
-        </div>
-      </Router>
+      <AuthProvider>
+        <Router>
+          <div className="app-wrapper">
+            <Navbar />
+            <main className="main-content">
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/detect" element={<Detect setResult={setResult} addToHistory={addToHistory} />} />
+                <Route path="/result" element={<Result result={result} scanHistory={scanHistory} />} />
+                <Route path="/supplements" element={<Supplements />} />
+                <Route path="/contact" element={<Contact />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/signup" element={<Signup />} />
+                <Route path="/my-scans" element={<MyScans />} />
+              </Routes>
+            </main>
+            <Footer />
+          </div>
+        </Router>
+      </AuthProvider>
     </LangContext.Provider>
   );
 }
