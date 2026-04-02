@@ -1,4 +1,4 @@
-import React, { useContext, useRef, useState, useCallback } from 'react';
+import React, { useContext, useRef, useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { LangContext } from '../App';
@@ -22,6 +22,14 @@ export default function Detect({ setResult, addToHistory }) {
   const videoRef = useRef();
   const streamRef = useRef(null);
 
+  // Attach stream to video element whenever cameraOn becomes true
+  useEffect(() => {
+    if (cameraOn && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [cameraOn]);
+
   const handleFile = (e) => {
     const f = e.target.files[0];
     if (!f) return;
@@ -33,12 +41,16 @@ export default function Detect({ setResult, addToHistory }) {
 
   const startCamera = async () => {
     setError('');
+    setPreview(null);
+    setImage(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      });
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
       setCameraOn(true);
-    } catch {
+    } catch (err) {
+      console.error('Camera error:', err);
       setError('Camera not available. Please upload an image instead.');
     }
   };
@@ -52,35 +64,58 @@ export default function Detect({ setResult, addToHistory }) {
   };
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video) { setError('Video not ready. Please try again.'); return; }
+
+    const w = video.videoWidth || 640;
+    const h = video.videoHeight || 480;
+
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, w, h);
+
+    // Get data URL immediately for preview
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    setPreview(dataUrl);
+
+    // Convert to Blob for upload
     canvas.toBlob(blob => {
-      setImage(blob);
-      setPreview(canvas.toDataURL('image/jpeg'));
-      stopCamera();
+      if (blob) {
+        setImage(blob);
+      } else {
+        // Fallback: convert dataUrl to blob manually
+        const byteString = atob(dataUrl.split(',')[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+        const fallbackBlob = new Blob([ab], { type: 'image/jpeg' });
+        setImage(fallbackBlob);
+      }
     }, 'image/jpeg', 0.9);
+
+    stopCamera();
   }, []);
 
   const detect = async () => {
     if (!image) { setError('Please select or capture an image first.'); return; }
     setLoading(true); setError(''); setSlowServer(false);
 
-    // Show wake-up message after 8 seconds (Render free tier may be sleeping)
     const slowTimer = setTimeout(() => setSlowServer(true), 8000);
 
     try {
       const formData = new FormData();
-      formData.append('image', image);
-      const { data } = await axios.post(`${API_URL}/predict`, formData, { timeout: 120000 });
+      formData.append('image', image, 'leaf.jpg');
+      const { data } = await axios.post(`${API_URL}/predict`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000
+      });
       clearTimeout(slowTimer);
 
       setResult({ ...data, imageUrl: preview });
       addToHistory({ ...data, imageUrl: preview, timestamp: Date.now() });
 
-      // Save to Firestore if user is logged in
       if (currentUser && saveScanToFirestore) {
         await saveScanToFirestore({ ...data });
       }
@@ -139,14 +174,28 @@ export default function Detect({ setResult, addToHistory }) {
       ) : (
         <>
           <div className="detect-grid">
-            {/* Upload */}
+            {/* Upload / Preview panel */}
             <div>
               <div
-                className={`upload-box ${preview ? 'has-image' : ''}`}
-                onClick={() => fileRef.current.click()}
+                className={`upload-box ${preview && !cameraOn ? 'has-image' : ''}`}
+                onClick={() => { if (!preview) fileRef.current.click(); }}
+                style={{ cursor: preview && !cameraOn ? 'default' : 'pointer' }}
               >
                 {preview && !cameraOn ? (
-                  <img src={preview} alt="preview" className="upload-preview" />
+                  <>
+                    <img src={preview} alt="preview" className="upload-preview" />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setImage(null); setPreview(null); }}
+                      style={{
+                        position: 'absolute', top: 8, right: 8,
+                        background: 'rgba(0,0,0,0.55)', border: 'none',
+                        color: '#fff', borderRadius: '50%', width: 28, height: 28,
+                        cursor: 'pointer', fontSize: 14, display: 'flex',
+                        alignItems: 'center', justifyContent: 'center'
+                      }}
+                      title="Remove image"
+                    >✕</button>
+                  </>
                 ) : (
                   <>
                     <span style={{ fontSize: 52, display: 'block', marginBottom: 12 }}>📷</span>
@@ -155,19 +204,35 @@ export default function Detect({ setResult, addToHistory }) {
                   </>
                 )}
               </div>
-              <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleFile}
+              />
             </div>
 
-            {/* Camera */}
+            {/* Camera panel */}
             <div className="camera-box">
               <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12, fontWeight: 600 }}>
                 📸 {t.capture}
               </p>
               {cameraOn ? (
                 <>
-                  <video ref={videoRef} autoPlay playsInline style={{ width: '100%', borderRadius: 'var(--radius-md)' }} />
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{ width: '100%', borderRadius: 'var(--radius-md)', display: 'block' }}
+                  />
                   <div className="camera-controls">
-                    <button className="btn-primary" style={{ padding: '10px 24px', fontSize: 14 }} onClick={capturePhoto}>
+                    <button
+                      className="btn-primary"
+                      style={{ padding: '10px 24px', fontSize: 14 }}
+                      onClick={capturePhoto}
+                    >
                       📸 Capture
                     </button>
                     <button className="btn-secondary" onClick={stopCamera}>✕ Cancel</button>
@@ -192,10 +257,16 @@ export default function Detect({ setResult, addToHistory }) {
           )}
 
           <div className="detect-action">
-            <button className="btn-detect" onClick={detect} disabled={!image}>
+            <button className="btn-detect" onClick={detect} disabled={!image || cameraOn}>
               🔍 {t.detect_btn}
             </button>
           </div>
+
+          {image && !cameraOn && (
+            <p style={{ textAlign: 'center', marginTop: 10, color: 'var(--text-muted)', fontSize: 13 }}>
+              ✅ Image ready — click Detect Disease
+            </p>
+          )}
         </>
       )}
     </div>
