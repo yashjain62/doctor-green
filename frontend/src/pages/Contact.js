@@ -13,14 +13,14 @@ const TEAM = [
     name: 'Udit Raj',
     email: 'uditraj454@gmail.com',
     phone: '+91 7014315345',
-    linkedin: 'hhttps://www.linkedin.com/in/udit-raj-a997b0249',
+    linkedin: 'https://www.linkedin.com/in/udit-raj-a997b0249',
     initials: 'UR'
   },
   {
     name: 'Yash Tak',
     email: 'yashtak711@gmail.com',
     phone: '+91 9024584891',
-    linkedin: 'hhttps://www.linkedin.com/in/vash-tak7',
+    linkedin: 'https://www.linkedin.com/in/yash-tak7',
     initials: 'YT'
   }
 ];
