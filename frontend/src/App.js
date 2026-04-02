@@ -46,20 +46,46 @@ const translations = {
   }
 };
 
+// Load history — strip any broken blob:// URLs from old sessions
+function loadHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+    return raw.map(item => ({
+      ...item,
+      // Keep only base64 or https URLs — blob:// URLs expire and show broken
+      imageUrl: item.imageUrl && (
+        item.imageUrl.startsWith('data:') ||
+        item.imageUrl.startsWith('https://')
+      ) ? item.imageUrl : null
+    }));
+  } catch {
+    return [];
+  }
+}
+
 function App() {
   const [lang, setLang] = useState('en');
   const [result, setResult] = useState(null);
-  const [scanHistory, setScanHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('scanHistory') || '[]'); }
-    catch { return []; }
-  });
+  const [scanHistory, setScanHistory] = useState(loadHistory);
 
   const t = translations[lang];
 
   const addToHistory = (item) => {
-    const updated = [item, ...scanHistory].slice(0, 5);
+    // Only store base64 imageUrls — never blob:// URLs
+    const safeItem = {
+      ...item,
+      imageUrl: item.imageUrl && item.imageUrl.startsWith('data:') ? item.imageUrl : null
+    };
+    const updated = [safeItem, ...scanHistory].slice(0, 5);
     setScanHistory(updated);
-    localStorage.setItem('scanHistory', JSON.stringify(updated));
+    try {
+      localStorage.setItem('scanHistory', JSON.stringify(updated));
+    } catch (e) {
+      // localStorage can be full if base64 images are large — trim to 3
+      const trimmed = updated.slice(0, 3);
+      setScanHistory(trimmed);
+      try { localStorage.setItem('scanHistory', JSON.stringify(trimmed)); } catch {}
+    }
   };
 
   return (

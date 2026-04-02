@@ -6,23 +6,67 @@ import { useAuth } from '../context/AuthContext';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
+// Convert file/blob to base64 string (persists across page reloads)
+function toBase64(fileOrBlob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result); // data:image/jpeg;base64,...
+    reader.onerror = reject;
+    reader.readAsDataURL(fileOrBlob);
+  });
+}
+
+// Basic green-content check — rejects clearly non-plant images
+// Uses canvas to sample pixel colors from the image
+async function hasPlantContent(base64) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const SIZE = 80; // sample at 80x80
+        canvas.width = SIZE; canvas.height = SIZE;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, SIZE, SIZE);
+        const data = ctx.getImageData(0, 0, SIZE, SIZE).data;
+
+        let greenPixels = 0, totalPixels = SIZE * SIZE;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          // Green-dominant pixel: g is highest AND noticeably greater than r and b
+          if (g > r + 15 && g > b + 15 && g > 60) greenPixels++;
+        }
+
+        const greenRatio = greenPixels / totalPixels;
+        // Require at least 8% green pixels — catches selfies, objects, blank images
+        resolve(greenRatio >= 0.08);
+      } catch {
+        resolve(true); // if canvas fails, allow through
+      }
+    };
+    img.onerror = () => resolve(true);
+    img.src = base64;
+  });
+}
+
 export default function Detect({ setResult, addToHistory }) {
   const { t } = useContext(LangContext);
   const { saveScanToFirestore, currentUser } = useAuth();
   const navigate = useNavigate();
 
-  const [image, setImage] = useState(null);
-  const [preview, setPreview] = useState(null);
+  const [image, setImage] = useState(null);       // File or Blob
+  const [preview, setPreview] = useState(null);   // base64 data URL (persists)
   const [cameraOn, setCameraOn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [slowServer, setSlowServer] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [error, setError] = useState('');
 
   const fileRef = useRef();
   const videoRef = useRef();
   const streamRef = useRef(null);
 
-  // Attach stream to video element whenever cameraOn becomes true
+  // Attach stream to video whenever camera turns on
   useEffect(() => {
     if (cameraOn && videoRef.current && streamRef.current) {
       videoRef.current.srcObject = streamRef.current;
@@ -30,13 +74,32 @@ export default function Detect({ setResult, addToHistory }) {
     }
   }, [cameraOn]);
 
-  const handleFile = (e) => {
+  const handleFile = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    setImage(f);
-    setPreview(URL.createObjectURL(f));
-    setCameraOn(false);
-    stopCamera();
+    setError(''); setValidating(true);
+
+    try {
+      // Convert to base64 so it survives page reloads in localStorage
+      const base64 = await toBase64(f);
+
+      // Validate: must look like a plant image
+      const isPlant = await hasPlantContent(base64);
+      if (!isPlant) {
+        setError('⚠️ This doesn\'t look like a plant or leaf image. Please upload a clear photo of a plant leaf.');
+        setValidating(false);
+        e.target.value = ''; // reset file input
+        return;
+      }
+
+      setImage(f);
+      setPreview(base64); // store as base64, not blob URL
+      setCameraOn(false);
+      stopCamera();
+    } catch {
+      setError('Could not read the image file. Please try another.');
+    }
+    setValidating(false);
   };
 
   const startCamera = async () => {
@@ -50,7 +113,6 @@ export default function Detect({ setResult, addToHistory }) {
       streamRef.current = stream;
       setCameraOn(true);
     } catch (err) {
-      console.error('Camera error:', err);
       setError('Camera not available. Please upload an image instead.');
     }
   };
@@ -63,7 +125,7 @@ export default function Detect({ setResult, addToHistory }) {
     setCameraOn(false);
   };
 
-  const capturePhoto = useCallback(() => {
+  const capturePhoto = useCallback(async () => {
     const video = videoRef.current;
     if (!video) { setError('Video not ready. Please try again.'); return; }
 
@@ -71,27 +133,33 @@ export default function Detect({ setResult, addToHistory }) {
     const h = video.videoHeight || 480;
 
     const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, w, h);
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(video, 0, 0, w, h);
 
-    // Get data URL immediately for preview
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-    setPreview(dataUrl);
+    const base64 = canvas.toDataURL('image/jpeg', 0.9);
 
-    // Convert to Blob for upload
+    // Validate captured image too
+    setValidating(true);
+    const isPlant = await hasPlantContent(base64);
+    if (!isPlant) {
+      setError('⚠️ This doesn\'t look like a plant or leaf. Please point the camera at a plant leaf.');
+      setValidating(false);
+      return;
+    }
+    setValidating(false);
+
+    setPreview(base64); // base64 — persists fine
+
+    // Convert base64 to blob for upload
     canvas.toBlob(blob => {
       if (blob) {
         setImage(blob);
       } else {
-        // Fallback: convert dataUrl to blob manually
-        const byteString = atob(dataUrl.split(',')[1]);
+        const byteString = atob(base64.split(',')[1]);
         const ab = new ArrayBuffer(byteString.length);
         const ia = new Uint8Array(ab);
         for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-        const fallbackBlob = new Blob([ab], { type: 'image/jpeg' });
-        setImage(fallbackBlob);
+        setImage(new Blob([ab], { type: 'image/jpeg' }));
       }
     }, 'image/jpeg', 0.9);
 
@@ -113,6 +181,7 @@ export default function Detect({ setResult, addToHistory }) {
       });
       clearTimeout(slowTimer);
 
+      // Store base64 preview (not blob URL) so history thumbnails survive reload
       setResult({ ...data, imageUrl: preview });
       addToHistory({ ...data, imageUrl: preview, timestamp: Date.now() });
 
@@ -128,6 +197,13 @@ export default function Detect({ setResult, addToHistory }) {
       setLoading(false);
       setSlowServer(false);
     }
+  };
+
+  const clearImage = () => {
+    setImage(null);
+    setPreview(null);
+    setError('');
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
@@ -178,20 +254,25 @@ export default function Detect({ setResult, addToHistory }) {
             <div>
               <div
                 className={`upload-box ${preview && !cameraOn ? 'has-image' : ''}`}
-                onClick={() => { if (!preview) fileRef.current.click(); }}
-                style={{ cursor: preview && !cameraOn ? 'default' : 'pointer' }}
+                onClick={() => { if (!preview && !validating) fileRef.current.click(); }}
+                style={{ cursor: preview && !cameraOn ? 'default' : 'pointer', position: 'relative' }}
               >
-                {preview && !cameraOn ? (
+                {validating ? (
+                  <>
+                    <div className="spinner" style={{ width: 36, height: 36, marginBottom: 12 }} />
+                    <p style={{ color: '#fff', fontSize: 14 }}>Checking image...</p>
+                  </>
+                ) : preview && !cameraOn ? (
                   <>
                     <img src={preview} alt="preview" className="upload-preview" />
                     <button
-                      onClick={(e) => { e.stopPropagation(); setImage(null); setPreview(null); }}
+                      onClick={(e) => { e.stopPropagation(); clearImage(); }}
                       style={{
-                        position: 'absolute', top: 8, right: 8,
-                        background: 'rgba(0,0,0,0.55)', border: 'none',
-                        color: '#fff', borderRadius: '50%', width: 28, height: 28,
+                        position: 'absolute', top: 10, right: 10,
+                        background: 'rgba(0,0,0,0.6)', border: 'none',
+                        color: '#fff', borderRadius: '50%', width: 30, height: 30,
                         cursor: 'pointer', fontSize: 14, display: 'flex',
-                        alignItems: 'center', justifyContent: 'center'
+                        alignItems: 'center', justifyContent: 'center', zIndex: 10
                       }}
                       title="Remove image"
                     >✕</button>
@@ -201,6 +282,9 @@ export default function Detect({ setResult, addToHistory }) {
                     <span style={{ fontSize: 52, display: 'block', marginBottom: 12 }}>📷</span>
                     <p className="upload-title">{t.upload_title}</p>
                     <p className="upload-hint">{t.upload_hint}</p>
+                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 8 }}>
+                      🌿 Plant/leaf images only
+                    </p>
                   </>
                 )}
               </div>
@@ -232,8 +316,9 @@ export default function Detect({ setResult, addToHistory }) {
                       className="btn-primary"
                       style={{ padding: '10px 24px', fontSize: 14 }}
                       onClick={capturePhoto}
+                      disabled={validating}
                     >
-                      📸 Capture
+                      {validating ? '⏳ Checking...' : '📸 Capture'}
                     </button>
                     <button className="btn-secondary" onClick={stopCamera}>✕ Cancel</button>
                   </div>
@@ -252,21 +337,21 @@ export default function Detect({ setResult, addToHistory }) {
               background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)',
               borderRadius: 12, padding: '12px 18px', marginTop: 16, color: '#fca5a5', fontSize: 14
             }}>
-              ⚠️ {error}
+              {error}
             </div>
           )}
 
+          {image && !cameraOn && !error && (
+            <p style={{ textAlign: 'center', marginTop: 10, color: '#4caf7d', fontSize: 13, fontWeight: 600 }}>
+              ✅ Plant image ready — click Detect Disease
+            </p>
+          )}
+
           <div className="detect-action">
-            <button className="btn-detect" onClick={detect} disabled={!image || cameraOn}>
+            <button className="btn-detect" onClick={detect} disabled={!image || cameraOn || validating}>
               🔍 {t.detect_btn}
             </button>
           </div>
-
-          {image && !cameraOn && (
-            <p style={{ textAlign: 'center', marginTop: 10, color: 'var(--text-muted)', fontSize: 13 }}>
-              ✅ Image ready — click Detect Disease
-            </p>
-          )}
         </>
       )}
     </div>
